@@ -1,0 +1,46 @@
+image: docker:latest
+services:
+  - docker:dind
+
+stages:
+- build
+- package
+- deploy
+
+maven-build:
+  image: maven:3-jdk-8
+  stage: build
+  variables:
+      MAVEN_OPTS: "-Dmaven.repo.local=/cache/.m2/repository"
+  script:
+   - mvn package -DskipTests -B -U -P$(echo $CI_BUILD_TAG | sed 's/v[[:digit:].]\+//')
+   - echo $(git log -1 --pretty=%B)
+  artifacts:
+    paths:
+      - target/ROOT.war
+    expire_in: 10 mins
+  only:
+   - tags
+
+docker:
+   stage: package
+   script:
+     - docker login -u $OFD_API -p $OFD_TOKEN registry.test.ru
+     - docker build -t registry.test.ru/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:latest .
+     - docker tag registry.test.ru/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:latest registry.test.ru/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_BUILD_TAG
+     - docker push registry.test.ru/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:latest
+     - docker push registry.test.ru/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME:$CI_BUILD_TAG
+   only:
+    - tags
+
+deploy:
+   stage: deploy
+   image: python:2
+   script:
+     - git clone https://$OFD_API:$OFD_TOKEN@gitlab.test.ru/catalog.git
+     - cd catalog && python updcatalog $CI_PROJECT_NAME $CI_BUILD_TAG
+   only:
+    - tags
+   when: on_success
+
+
